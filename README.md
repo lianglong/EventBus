@@ -38,8 +38,6 @@ func init() {
 	refundEventName = fmt.Sprintf("%s.%s", refundEventRef.PkgPath(), refundEventRef.Name())
 }
 
-var eventDispatcher *Dispatcher = EventBus.New()
-
 type OrderEvent struct{ OrderID string }
 
 func (OrderEvent) EventName() string { return orderEventName }
@@ -51,12 +49,15 @@ func (RefundEvent) EventName() string { return refundEventName }
 // 统一监听器
 type OrderListener struct{}
 
-func (OrderListener) ListenEvents() []Event {
-	return []Event{OrderEvent{}, RefundEvent{}}
+//设置监听的事件
+func (OrderListener) ListenEvents() []EventBus.Event {
+	return []EventBus.Event{OrderEvent{}, RefundEvent{}}
 }
+监听器优先级
 func (OrderListener) Priority() int32 { return 1 }
 
-func (OrderListener) Handle(e Event) error {
+//监听器回调
+func (OrderListener) Handle(e EventBus.Event) error {
 	switch ev := e.(type) {
 	case OrderEvent:
 		fmt.Printf("[%s]收到支付%s\n", e.EventName(), ev.OrderID)
