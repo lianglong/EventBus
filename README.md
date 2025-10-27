@@ -12,18 +12,18 @@
 - [错误处理](#错误处理)
 
 ---
-
-## 基础使用
 ```go
-go get -u -v github.com/lianglong/EventBus
+go get -u -v github.com/lianglong/EventBus/v2
 ```
+## 基础使用
+
 ```go
 package main
 
 import (
 	"context"
 	"fmt"
-	"github.com/lianglong/EventBus"
+	"github.com/lianglong/EventBus/v2"
 )
 
 // 定义事件
@@ -81,7 +81,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/lianglong/EventBus"
+	"github.com/lianglong/EventBus/v2"
 )
 
 type OrderCreatedEvent struct {
@@ -134,7 +134,7 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"github.com/lianglong/EventBus"
+	"github.com/lianglong/EventBus/v2"
 )
 
 type HeavyTaskEvent struct {
@@ -191,7 +191,7 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"github.com/lianglong/EventBus"
+	"github.com/lianglong/EventBus/v2"
 )
 
 type DataProcessEvent struct {
@@ -254,7 +254,7 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"github.com/lianglong/EventBus"
+	"github.com/lianglong/EventBus/v2"
 )
 
 // 日志中间件
@@ -346,7 +346,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
-	"github.com/lianglong/EventBus"
+	"github.com/lianglong/EventBus/v2"
 )
 
 type EmailEvent struct {
@@ -414,7 +414,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/lianglong/EventBus"
+	"github.com/lianglong/EventBus/v2"
 )
 
 type PaymentEvent struct {
@@ -473,7 +473,7 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"github.com/lianglong/EventBus"
+	"github.com/lianglong/EventBus/v2"
 )
 
 // 定义事件
