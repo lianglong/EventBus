@@ -14,7 +14,9 @@
 ---
 
 ## 基础使用
-
+```go
+go get -u -v github.com/lianglong/EventBus
+```
 ```go
 package main
 
