@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	LowPriority    int32 = iota //0 低优先级
-	NormalPriority              //1 普通优先级
-	HighPriority                //2 高优先级
+	LowPriority    int32 = iota // 0 低优先级
+	NormalPriority              // 1 普通优先级
+	HighPriority                // 2 高优先级
 )
 
 var (
@@ -32,8 +32,19 @@ type Listener interface {
 	Priority() int32
 }
 
-// Middleware 中间件函数类型
-type Middleware func(context.Context, Event, HandleFunc) HandleFunc
+// Middleware 中间件函数类型（标准洋葱模型）
+//
+// 用法示例：
+//
+//	func LogMiddleware(next HandleFunc) HandleFunc {
+//	    return func(ctx context.Context, e Event) error {
+//	        log.Printf("before: %s", e.EventName())
+//	        err := next(ctx, e)
+//	        log.Printf("after: %s, err=%v", e.EventName(), err)
+//	        return err
+//	    }
+//	}
+type Middleware func(HandleFunc) HandleFunc
 
 // Subscription 订阅句柄，用于取消订阅
 type Subscription struct {
@@ -71,12 +82,12 @@ type Options struct {
 
 	// PublishTimeout 发布超时时间，0 表示无超时
 	//
-	// 异步模式(AsyncWorkers > 0)时：
+	// 异步模式 (AsyncWorkers > 0) 时：
 	// - 限制的是"任务入队"的等待时间
 	// - 如果队列已满，等待超过此时间将返回 ErrPublishTimeout
 	// - 不限制 handler 的实际执行时间
 	//
-	// 同步模式(AsyncWorkers = 0)时：
+	// 同步模式 (AsyncWorkers = 0) 时：
 	// - 限制的是"所有 handler 执行完成"的总时间
 	// - 超时后会取消正在执行的 handler（通过 context）
 	// - 返回 context.DeadlineExceeded 错误
@@ -86,16 +97,16 @@ type Options struct {
 	// 当 handler 返回错误时被调用，可用于日志记录、告警等
 	ErrorHandler func(Event, error)
 
-	// Middlewares 中间件列表
-	// 按顺序应用，最后一个中间件最先执行（洋葱模型）
+	// Middlewares 中间件列表（标准洋葱模型）
+	// 按顺序声明，第一个中间件在最外层（最先进入，最后退出）
+	// 例如 [A, B, C] 的执行顺序为：A → B → C → handler → C → B → A
 	Middlewares []Middleware
 }
 
 func New(opts ...*Options) *Dispatcher {
 	d := &Dispatcher{
-		nextID:  1,
-		closed:  0,
-		closeCh: make(chan struct{}),
+		nextID: 1,
+		closed: 0,
 	}
 
 	m := make(map[string][]listenerItem)
@@ -107,6 +118,7 @@ func New(opts ...*Options) *Dispatcher {
 
 	// 启动异步 worker
 	if d.options.AsyncWorkers > 0 {
+		// taskCh 缓冲大小 = workers * 10，关闭时通过 close(taskCh) 通知 worker 退出
 		d.taskCh = make(chan asyncTask, d.options.AsyncWorkers*10)
 		d.wg = &sync.WaitGroup{}
 		for i := 0; i < d.options.AsyncWorkers; i++ {
@@ -120,14 +132,14 @@ func New(opts ...*Options) *Dispatcher {
 
 type Dispatcher struct {
 	val     atomic.Value
+	mu      sync.Mutex // 仅用于写操作（Subscribe/Unsubscribe），读路径仍无锁
 	nextID  uint64
 	options Options
 
 	// 异步发布相关
-	taskCh  chan asyncTask
-	wg      *sync.WaitGroup
-	closed  uint32
-	closeCh chan struct{}
+	taskCh chan asyncTask
+	wg     *sync.WaitGroup
+	closed uint32
 }
 
 type asyncTask struct {
@@ -136,37 +148,37 @@ type asyncTask struct {
 	ctx   context.Context
 }
 
-// worker 异步处理事件
+// worker 通过 range 消费 taskCh，taskCh 关闭后自然退出
+// 这样 Close() 可以通过 close(taskCh) → wg.Wait() 优雅排空队列
 func (d *Dispatcher) worker() {
 	defer d.wg.Done()
-	for {
-		select {
-		case <-d.closeCh:
-			return
-		case task := <-d.taskCh:
-			d.executeListeners(task.ctx, task.event, task.items)
-		}
+	for task := range d.taskCh {
+		d.executeListeners(task.ctx, task.event, task.items)
 	}
+}
+
+// buildChain 将中间件链应用到 handler，返回最终的处理函数
+// 执行顺序：Middlewares[0] → Middlewares[1] → ... → handler
+func (d *Dispatcher) buildChain(handler HandleFunc) HandleFunc {
+	// 逆序包裹，使 Middlewares[0] 在最外层
+	for i := len(d.options.Middlewares) - 1; i >= 0; i-- {
+		handler = d.options.Middlewares[i](handler)
+	}
+	return handler
 }
 
 // executeListeners 执行所有监听器，应用中间件并处理错误
 func (d *Dispatcher) executeListeners(ctx context.Context, event Event, items []listenerItem) {
 	for _, l := range items {
-		// 检查 context 是否已取消，如果取消则提前退出
+		// 每次循环前检查 context，支持超时/取消提前退出
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
 
-		handler := l.fn
+		handler := d.buildChain(l.fn)
 
-		// 应用中间件（逆序，最后一个中间件最先执行）
-		for i := len(d.options.Middlewares) - 1; i >= 0; i-- {
-			handler = d.options.Middlewares[i](ctx, event, handler)
-		}
-
-		// 执行处理器
 		if err := handler(ctx, event); err != nil {
 			if d.options.ErrorHandler != nil {
 				d.options.ErrorHandler(event, err)
@@ -175,40 +187,39 @@ func (d *Dispatcher) executeListeners(ctx context.Context, event Event, items []
 	}
 }
 
+// addSubscribe 内部订阅实现
+// 写操作持有 mu，保证并发 Subscribe 不会互相覆盖；读路径不需要锁
 func (d *Dispatcher) addSubscribe(name string, fn HandleFunc, priority int32) (*Subscription, error) {
 	if atomic.LoadUint32(&d.closed) == 1 {
 		return nil, ErrDispatcherClosed
 	}
 
-	// 生成唯一 ID
 	id := atomic.AddUint64(&d.nextID, 1)
 
-	// 1. 取出旧表
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// 在锁内执行 Load → 复制 → Store，避免并发写互相覆盖
 	oldPtr := d.val.Load().(*map[string][]listenerItem)
 
-	// 2. 只复制需要修改的切片，优化内存分配
 	newMap := make(map[string][]listenerItem, len(*oldPtr)+1)
 	for k, v := range *oldPtr {
 		if k == name {
-			// 复制并预分配空间
-			newMap[k] = make([]listenerItem, len(v), len(v)+1)
-			copy(newMap[k], v)
+			newSlice := make([]listenerItem, len(v), len(v)+1)
+			copy(newSlice, v)
+			newMap[k] = newSlice
 		} else {
-			// 其他事件直接共享切片
+			// 其他事件的切片不需要修改，直接共享
 			newMap[k] = v
 		}
 	}
 
-	// 3. 追加新监听器
-	l := listenerItem{id: id, fn: fn, priority: priority}
-	newMap[name] = append(newMap[name], l)
+	newMap[name] = append(newMap[name], listenerItem{id: id, fn: fn, priority: priority})
 
-	// 4. 使用标准库排序（优化排序算法）
 	sort.SliceStable(newMap[name], func(i, j int) bool {
 		return newMap[name][i].priority > newMap[name][j].priority
 	})
 
-	// 5. 原子替换整张表
 	d.val.Store(&newMap)
 
 	return &Subscription{
@@ -218,18 +229,20 @@ func (d *Dispatcher) addSubscribe(name string, fn HandleFunc, priority int32) (*
 	}, nil
 }
 
-// unsubscribe 取消订阅
+// unsubscribe 取消订阅（同样持锁写）
 func (d *Dispatcher) unsubscribe(eventName string, id uint64) {
 	if atomic.LoadUint32(&d.closed) == 1 {
 		return
 	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	oldPtr := d.val.Load().(*map[string][]listenerItem)
 	newMap := make(map[string][]listenerItem, len(*oldPtr))
 
 	for k, v := range *oldPtr {
 		if k == eventName {
-			// 过滤掉指定 ID 的监听器
 			newSlice := make([]listenerItem, 0, len(v))
 			for _, item := range v {
 				if item.id != id {
@@ -247,21 +260,23 @@ func (d *Dispatcher) unsubscribe(eventName string, id uint64) {
 	d.val.Store(&newMap)
 }
 
-// Subscribe 订阅监听器，返回订阅句柄
-func (d *Dispatcher) Subscribe(listener Listener) []*Subscription {
+// Subscribe 订阅监听器，返回订阅句柄列表
+// 若 dispatcher 已关闭，返回空列表（通过 error 通知调用方）
+func (d *Dispatcher) Subscribe(listener Listener) ([]*Subscription, error) {
 	events := listener.ListenEvents()
 	if len(events) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	subs := make([]*Subscription, 0, len(events))
 	for _, event := range events {
 		sub, err := d.addSubscribe(event.EventName(), listener.Handle, listener.Priority())
-		if err == nil && sub != nil {
-			subs = append(subs, sub)
+		if err != nil {
+			return subs, err
 		}
+		subs = append(subs, sub)
 	}
-	return subs
+	return subs, nil
 }
 
 // SubscribeFunc 订阅函数（便捷方法）
@@ -287,40 +302,26 @@ func (d *Dispatcher) PublishContext(ctx context.Context, e Event) error {
 		return nil
 	}
 
-	// 异步发布
+	// 异步模式：将任务投入 worker 队列后立即返回
 	if d.options.AsyncWorkers > 0 {
-		task := asyncTask{
-			event: e,
-			items: items,
-			ctx:   ctx,
-		}
+		task := asyncTask{event: e, items: items, ctx: ctx}
 
-		// 支持超时
 		if d.options.PublishTimeout > 0 {
-			// 【重要】这里的 timer 限制的是"任务入队"的等待时间
-			// 场景：如果所有 worker 都在忙碌，且队列已满（容量 = AsyncWorkers * 10）
-			//      此时 d.taskCh <- task 会阻塞等待队列有空位
-			//      timer 防止在这里等待太久
-			//
-			// 注意：这里 NOT 限制 handler 的实际执行时间
-			//      handler 执行时间由 worker 中的 ctx 控制
+			// PublishTimeout 在异步模式下限制的是"入队等待"时间，而非 handler 执行时间
+			// 场景：队列已满（所有 worker 繁忙），此处阻塞超过 PublishTimeout 则返回 ErrPublishTimeout
 			timer := time.NewTimer(d.options.PublishTimeout)
 			defer timer.Stop()
 
 			select {
 			case d.taskCh <- task:
-				// 成功放入队列，立即返回（不等待执行完成）
 				return nil
 			case <-timer.C:
-				// 入队超时：队列一直满，超过 PublishTimeout 还放不进去
 				return ErrPublishTimeout
 			case <-ctx.Done():
-				// context 被取消（可能是用户主动取消或上层超时）
 				return ctx.Err()
 			}
 		}
 
-		// 没有配置 PublishTimeout，无限等待入队
 		select {
 		case d.taskCh <- task:
 			return nil
@@ -329,55 +330,44 @@ func (d *Dispatcher) PublishContext(ctx context.Context, e Event) error {
 		}
 	}
 
-	// 同步发布
+	// 同步模式：在当前 goroutine 直接执行，无需额外 goroutine
 	if d.options.PublishTimeout > 0 {
-		// 【重要】这里的 WithTimeout 限制的是"所有 handler 执行完成"的总时间
-		// 场景：有 3 个 handler，每个执行 200ms，总共需要 600ms
-		//      如果 PublishTimeout = 500ms，则第 3 个 handler 会被打断
-		//
-		// 机制：通过 context 传递超时信号
-		//      - handler 可以通过 ctx.Done() 感知超时并提前退出
-		//      - executeListeners 每次循环前也会检查 ctx.Done()
+		// PublishTimeout 在同步模式下限制的是"所有 handler 执行完毕"的总时间
+		// handler 可通过 ctx.Done() 感知超时并提前退出
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, d.options.PublishTimeout)
 		defer cancel()
 	}
 
-	// 启动 goroutine 执行所有监听器
-	done := make(chan struct{})
-	go func() {
-		d.executeListeners(ctx, e, items)
-		close(done)
-	}()
+	// 直接调用，避免原版不必要的 goroutine + channel 开销
+	d.executeListeners(ctx, e, items)
 
-	// 等待执行完成或超时
+	// 超时/取消时返回对应错误
 	select {
-	case <-done:
-		// 所有 handler 执行完成
-		return nil
 	case <-ctx.Done():
-		// 超时或被取消
-		// 注意：executeListeners 的 goroutine 还在运行，但会被 ctx.Done() 打断
 		return ctx.Err()
+	default:
+		return nil
 	}
 }
 
-// Close 优雅关闭，等待所有事件处理完成
+// Close 优雅关闭
+//
+// 异步模式：先关闭 taskCh，worker 排空队列后自然退出，再等待所有 worker 完成
+// 同步模式：直接标记关闭，已在飞行中的 Publish 调用不受影响
 func (d *Dispatcher) Close() error {
 	if !atomic.CompareAndSwapUint32(&d.closed, 0, 1) {
 		return ErrDispatcherClosed
 	}
 
-	close(d.closeCh)
-
-	// 等待所有 worker 完成
-	if d.wg != nil {
-		d.wg.Wait()
-	}
-
-	// 关闭任务通道
+	// 先关闭 taskCh，worker 通过 range 排空剩余任务后自然退出
+	// 注意顺序：必须先 close(taskCh) 再 wg.Wait()，反之 worker 不会退出
 	if d.taskCh != nil {
 		close(d.taskCh)
+	}
+
+	if d.wg != nil {
+		d.wg.Wait()
 	}
 
 	return nil

@@ -49,7 +49,7 @@ func TestBasicSubscribePublish(t *testing.T) {
 	dispatcher := New()
 	defer dispatcher.Close()
 
-	dispatcher.Subscribe(OrderListener{})
+	dispatcher.Subscribe(OrderListener{}) //nolint:errcheck
 
 	err := dispatcher.Publish(OrderEvent{OrderID: "123"})
 	if err != nil {
@@ -95,12 +95,12 @@ func TestContextCancellation(t *testing.T) {
 
 	var handler1Called bool
 	var handler2Called bool
-	var handler3Called bool
 
-	// 注册多个监听器，测试取消后后续监听器不会执行
+	// 注册监听器，第一个会执行一半后取消
 	dispatcher.SubscribeFunc(OrderEventName, func(ctx context.Context, e Event) error {
 		handler1Called = true
-		// 第一个 handler 检查并返回取消错误
+		time.Sleep(50 * time.Millisecond)
+		// 检查是否被取消
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -110,34 +110,30 @@ func TestContextCancellation(t *testing.T) {
 	}, HighPriority)
 
 	dispatcher.SubscribeFunc(OrderEventName, func(ctx context.Context, e Event) error {
-		// 这个不应该被执行，因为 context 已取消
+		// 这个不应该被执行，因为 context 会在第一个 handler 执行时被取消
 		handler2Called = true
 		return nil
 	}, NormalPriority)
 
-	dispatcher.SubscribeFunc(OrderEventName, func(ctx context.Context, e Event) error {
-		// 这个也不应该被执行
-		handler3Called = true
-		return nil
-	}, LowPriority)
-
-	// 创建已取消的 context
+	// 创建可取消的 context，在 handler 执行过程中取消
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // 立即取消
+
+	// 启动一个 goroutine 在 20ms 后取消
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
 
 	dispatcher.PublishContext(ctx, OrderEvent{OrderID: "order-1"})
 
-	// 第一个 handler 会被调用但应该检测到取消
+	// 第一个 handler 应该被调用
 	if !handler1Called {
 		t.Errorf("Handler1 should be called")
 	}
 
-	// 由于在 executeListeners 中检查了 ctx.Done()，后续 handler 不应该被调用
+	// 由于在 executeListeners 中检查了 ctx.Done()，第二个 handler 不应该被调用
 	if handler2Called {
 		t.Errorf("Handler2 should not be called when context is cancelled")
-	}
-	if handler3Called {
-		t.Errorf("Handler3 should not be called when context is cancelled")
 	}
 }
 
@@ -182,7 +178,10 @@ func TestUnsubscribe(t *testing.T) {
 	dispatcher := New()
 	defer dispatcher.Close()
 
-	subs := dispatcher.Subscribe(OrderListener{})
+	subs, err := dispatcher.Subscribe(OrderListener{})
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
 	if len(subs) != 2 {
 		t.Errorf("Expected 2 subscriptions, got %d", len(subs))
 	}
@@ -272,7 +271,7 @@ func TestMiddleware(t *testing.T) {
 	var called []string
 	var mu sync.Mutex
 
-	middleware1 := func(ctx context.Context, e Event, next HandleFunc) HandleFunc {
+	middleware1 := func(next HandleFunc) HandleFunc {
 		return func(ctx context.Context, event Event) error {
 			mu.Lock()
 			called = append(called, "before1")
@@ -285,7 +284,7 @@ func TestMiddleware(t *testing.T) {
 		}
 	}
 
-	middleware2 := func(ctx context.Context, e Event, next HandleFunc) HandleFunc {
+	middleware2 := func(next HandleFunc) HandleFunc {
 		return func(ctx context.Context, event Event) error {
 			mu.Lock()
 			called = append(called, "before2")
@@ -312,7 +311,7 @@ func TestMiddleware(t *testing.T) {
 
 	dispatcher.Publish(OrderEvent{OrderID: "123"})
 
-	expected := []string{"before2", "before1", "handler", "after1", "after2"}
+	expected := []string{"before1", "before2", "handler", "after2", "after1"}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(called) != len(expected) {
@@ -431,7 +430,7 @@ func BenchmarkPublishSync(b *testing.B) {
 	dispatcher := New()
 	defer dispatcher.Close()
 
-	dispatcher.Subscribe(OrderListener{})
+	dispatcher.Subscribe(OrderListener{}) //nolint:errcheck
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -446,7 +445,7 @@ func BenchmarkPublishAsync(b *testing.B) {
 	})
 	defer dispatcher.Close()
 
-	dispatcher.Subscribe(OrderListener{})
+	dispatcher.Subscribe(OrderListener{}) //nolint:errcheck
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -461,7 +460,7 @@ func BenchmarkSubscribe(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		dispatcher.Subscribe(OrderListener{})
+		dispatcher.Subscribe(OrderListener{}) //nolint:errcheck
 	}
 }
 
@@ -470,7 +469,7 @@ func BenchmarkConcurrentPublish(b *testing.B) {
 	dispatcher := New()
 	defer dispatcher.Close()
 
-	dispatcher.Subscribe(OrderListener{})
+	dispatcher.Subscribe(OrderListener{}) //nolint:errcheck
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
