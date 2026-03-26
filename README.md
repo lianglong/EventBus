@@ -13,7 +13,7 @@
 
 ---
 ```go
-go get -u -v github.com/lianglong/EventBus/v2
+go get -u -v github.com/lianglong/EventBus/v3
 ```
 ## 基础使用
 
@@ -23,7 +23,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/lianglong/EventBus/v2"
+	"github.com/lianglong/EventBus/v3"
 )
 
 // 定义事件
@@ -81,7 +81,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/lianglong/EventBus/v2"
+	"github.com/lianglong/EventBus/v3"
 )
 
 type OrderCreatedEvent struct {
@@ -134,7 +134,7 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"github.com/lianglong/EventBus/v2"
+	"github.com/lianglong/EventBus/v3"
 )
 
 type HeavyTaskEvent struct {
@@ -191,7 +191,7 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"github.com/lianglong/EventBus/v2"
+	"github.com/lianglong/EventBus/v3"
 )
 
 type DataProcessEvent struct {
@@ -254,11 +254,11 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"github.com/lianglong/EventBus/v2"
+	"github.com/lianglong/EventBus/v3"
 )
 
 // 日志中间件
-func LoggingMiddleware(ctx context.Context, e EventBus.Event, next EventBus.HandleFunc) EventBus.HandleFunc {
+func LoggingMiddleware(next EventBus.HandleFunc) EventBus.HandleFunc {
 	return func(ctx context.Context, event EventBus.Event) error {
 		start := time.Now()
 		fmt.Printf("[LOG] 开始处理事件: %s\n", event.EventName())
@@ -277,7 +277,7 @@ func LoggingMiddleware(ctx context.Context, e EventBus.Event, next EventBus.Hand
 }
 
 // 追踪中间件 - 为每个事件添加追踪 ID
-func TracingMiddleware(ctx context.Context, e EventBus.Event, next EventBus.HandleFunc) EventBus.HandleFunc {
+func TracingMiddleware(next EventBus.HandleFunc) EventBus.HandleFunc {
 	return func(ctx context.Context, event EventBus.Event) error {
 		// 如果 context 中没有 traceID，添加一个
 		if ctx.Value("traceID") == nil {
@@ -292,7 +292,7 @@ func TracingMiddleware(ctx context.Context, e EventBus.Event, next EventBus.Hand
 
 // 重试中间件
 func RetryMiddleware(maxRetries int) EventBus.Middleware {
-	return func(ctx context.Context, e EventBus.Event, next EventBus.HandleFunc) EventBus.HandleFunc {
+	return func(next EventBus.HandleFunc) EventBus.HandleFunc {
 		return func(ctx context.Context, event EventBus.Event) error {
 			var err error
 			for i := 0; i <= maxRetries; i++ {
@@ -346,7 +346,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
-	"github.com/lianglong/EventBus/v2"
+	"github.com/lianglong/EventBus/v3"
 )
 
 type EmailEvent struct {
@@ -414,7 +414,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/lianglong/EventBus/v2"
+	"github.com/lianglong/EventBus/v3"
 )
 
 type PaymentEvent struct {
@@ -473,7 +473,7 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"github.com/lianglong/EventBus/v2"
+	"github.com/lianglong/EventBus/v3"
 )
 
 // 定义事件
@@ -532,7 +532,7 @@ func main() {
 	dispatcher := EventBus.New(&EventBus.Options{
 		AsyncWorkers: 5,
 		Middlewares: []EventBus.Middleware{
-			func(ctx context.Context, e EventBus.Event, next EventBus.HandleFunc) EventBus.HandleFunc {
+			func(next EventBus.HandleFunc) EventBus.HandleFunc {
 				return func(ctx context.Context, event EventBus.Event) error {
 					start := time.Now()
 					err := next(ctx, event)

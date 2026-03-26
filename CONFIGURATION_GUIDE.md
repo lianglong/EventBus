@@ -446,7 +446,7 @@ package main
 
 import (
     "runtime"
-    "github.com/lianglong/EventBus/v2"
+    "github.com/lianglong/EventBus/v3"
 )
 
 func main() {
